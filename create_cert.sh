@@ -1,7 +1,7 @@
 #!/bin/zsh
 if [[ $# == 0 ]]
 then
-  echo "Usage: sh build.sh <host name>"
+  echo "Usage: sh create_cert.sh <host name>"
   exit 0
 fi
 env_error=1
