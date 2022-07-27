@@ -15,32 +15,30 @@ default_machine () {
   echo "podman-machine-default"
 }
 
-# shellcheck disable=SC2120
 start_vm () {
   machine_name=${1:-$(default_machine)}
   echo "Checking for $machine_name..."
-  found=0
-  podman machine list --noheading --format="{{.Name}}\t{{.Running}}" | \
-    while IFS= read -r line
-    do
-      if echo "$line" | grep -q "$machine_name" ;
+  local found=0
+  while read -r line
+  do
+    if echo "$line" | grep -q "$machine_name" ;
+    then
+      found=1
+      echo "$machine_name found. Checking running status..."
+      if echo "$line" | grep -q "false" ;
       then
-        found=1
-        echo "$machine_name found. Checking running status..."
-        if echo "$line" | grep -q "false" ;
+        echo "...$machine_name is not running. Starting..."
+        if ! podman machine start "$machine_name" ;
         then
-          echo "...$machine_name is not running. Starting..."
-          if ! podman machine start "$machine_name" ;
-          then
-            echo "Error: $machine_name failed to start"
-            return 1
-          fi
-        else
-          echo "Success: $machine_name is already running"
-          return 0
+          echo "Error: $machine_name failed to start"
+          return 1
         fi
+      else
+        echo "Success: $machine_name is already running"
+        return 0
       fi
-    done
+    fi
+  done < <(podman machine list --noheading --format="{{.Name}}\t{{.Running}}")
   if [[ $found -eq 0 ]]
   then
     echo "Error: $machine_name is not a known podman machine"

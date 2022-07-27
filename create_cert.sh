@@ -16,54 +16,55 @@ echo "Checking hostname..."
 re='^[a-z0-9][a-z0-9-]*[a-z0-9]$'
 if ! [[ $1 =~ $re ]]
 then
-  echo "Error: the host name is malformed; it must match this expression: $re"
+  echo "Error: the host name $1 is malformed; it must match this expression: $re"
   exit $env_error
 fi
 
 HOST_NAME=$1
-
+THIS_DIR="$(dirname "$(readlink -f "%N" ${0:A})")"
+export THIS_DIR
 echo "Checking environment..."
-source check_path.sh
+source "$THIS_DIR/check_path.sh"
 check_path .env $env_error
 if [[ $? != 0 ]]
 then
   echo "Unable to find .env file!"
   exit $env_error
 fi
-source .env
+source "$THIS_DIR/.env"
 
-if [[ -a .dev_env ]]
+if [[ -a ${THIS_DIR}/.dev_env ]]
 then
-  source .dev_env
+  source "$THIS_DIR/.dev_env"
 fi
 
-if ! { [[ -n $TLS_DIR ]] \
-&& [[ -n $COUNTRY ]] \
-&& [[ -n $STATE ]] \
-&& [[ -n $LOCALE ]] \
-&& [[ -n $ORGANIZATION ]] \
-&& [[ -n $ORGANIZATIONAL_UNIT ]] \
-&& [[ -n $CERTS_DIR ]] \
-&& [[ -n $PRIVATE_KEY_DIR ]] \
-&& [[ -n $INTERMEDIATE_CA_KEY_PATH ]] \
-&& [[ -n $INTERMEDIATE_CA_BUNDLE_PATH ]] \
-&& [[ -n $OPENSSL_CONF_PATH ]] \
-&& [[ -n $OPENSSL_EXT_PATH ]] \
-&& [[ -n $OPENSSL_PASSIN_PATH ]] ; }
+if ! [[ -n $TLS_DIR \
+&& -n $COUNTRY \
+&& -n $STATE \
+&& -n $LOCALE \
+&& -n $ORGANIZATION \
+&& -n $ORGANIZATIONAL_UNIT \
+&& -n $CERTS_DIR \
+&& -n $PRIVATE_KEY_DIR \
+&& -n $INTERMEDIATE_CA_KEY_PATH \
+&& -n $INTERMEDIATE_CA_BUNDLE_PATH \
+&& -n $OPENSSL_CONF_PATH \
+&& -n $OPENSSL_EXT_PATH \
+&& -n $OPENSSL_PASSIN_PATH ]] ;
 then
-  echo "All needed environment variables aren't specified: \
-  TLS_DIR: $TLS_DIR \
-  COUNTRY: $COUNTRY \
-  STATE: $STATE \
-  LOCALE: $LOCALE \
-  ORGANIZATION: $ORGANIZATION \
-  ORGANIZATIONAL_UNIT: $ORGANIZATIONAL_UNIT \
-  CERTS_DIR: $CERTS_DIR \
-  PRIVATE_KEY_DIR: $PRIVATE_KEY_DIR \
-  INTERMEDIATE_CA_KEY_PATH: $INTERMEDIATE_CA_KEY_PATH \
-  INTERMEDIATE_CA_BUNDLE_PATH: $INTERMEDIATE_CA_BUNDLE_PATH \
-  OPENSSL_CONF_PATH: $OPENSSL_CONF_PATH \
-  OPENSSL_EXT_PATH: $OPENSSL_EXT_PATH \
+  echo "All needed environment variables aren't specified:
+  TLS_DIR: $TLS_DIR
+  COUNTRY: $COUNTRY
+  STATE: $STATE
+  LOCALE: $LOCALE
+  ORGANIZATION: $ORGANIZATION
+  ORGANIZATIONAL_UNIT: $ORGANIZATIONAL_UNIT
+  CERTS_DIR: $CERTS_DIR
+  PRIVATE_KEY_DIR: $PRIVATE_KEY_DIR
+  INTERMEDIATE_CA_KEY_PATH: $INTERMEDIATE_CA_KEY_PATH
+  INTERMEDIATE_CA_BUNDLE_PATH: $INTERMEDIATE_CA_BUNDLE_PATH
+  OPENSSL_CONF_PATH: $OPENSSL_CONF_PATH
+  OPENSSL_EXT_PATH: $OPENSSL_EXT_PATH
   OPENSSL_PASSIN_PATH: $OPENSSL_PASSIN_PATH"
   exit $env_error
 fi
@@ -115,7 +116,7 @@ then
   fi
 fi
 
-if [[ (! -a "$HOST_CERT_PATH" || $overwrite == "true") ]]
+if [[ $overwrite == "true" ]]
 then
   echo "Creating new host certificate for $HOST_NAME..."
   if [[ -a "$HOST_KEY_PATH" ]]
@@ -188,14 +189,19 @@ then
 fi
 
 echo "Removing podman secrets..."
-source remove_podman_secret.sh
+source "$THIS_DIR/remove_podman_secret.sh"
 remove_secret "${HOST_NAME}_cert_key" $podman_error
 remove_secret "${HOST_NAME}_cert_pub" $podman_error
-remove_secret "${HOST_NAME}_cert_bundle_pub" $podman_error
+remove_secret "${HOST_NAME}_ca_bundle_pub" $podman_error
 
 echo "Creating podman secrets..."
-source create_podman_secret.sh
+source "$THIS_DIR/create_podman_secret.sh"
 create_secret "${HOST_NAME}_cert_key" "$HOST_KEY_PATH" $podman_error
 create_secret "${HOST_NAME}_cert_pub" "$HOST_CERT_PATH" $podman_error
-create_secret "${HOST_NAME}_cert_bundle_pub" "$HOST_CA_BUNDLE_PATH" $podman_error
-echo "Created podman secrets: ${HOST_NAME}_cert_key, ${HOST_NAME}_cert_pub, ${HOST_NAME}_cert_bundle_pub"
+create_secret "${HOST_NAME}_ca_bundle_pub" "$HOST_CA_BUNDLE_PATH" $podman_error
+echo "Created podman secrets: ${HOST_NAME}_cert_key, ${HOST_NAME}_cert_pub, ${HOST_NAME}_ca_bundle_pub"
+
+export HOST_KEY_PATH
+export HOST_CERT_PATH
+export HOST_CA_BUNDLE_PATH
+echo "Exported HOST_KEY_PATH, HOST_CERT_PATH, HOST_CA_BUNDLE_PATH"

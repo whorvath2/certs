@@ -3,6 +3,7 @@
 # and the optional second (error code) argument is supplied and is between 0 and 254, that error code is returned;
 # otherwise this function returns 1.
 
+
 check_path () {
   if [[ $# == 0 ]]
   then
@@ -12,7 +13,7 @@ check_path () {
   if ! [[ -a "$1" ]]
   then
     echo "$1 does not exist!"
-    source check_err_code.sh
+    source "$THIS_DIR/check_err_code.sh"
     code=$(check_err_code $2)
     return $code
   else
