@@ -78,9 +78,10 @@ check_path "$INTERMEDIATE_CA_BUNDLE_PATH" $env_error
 check_path "$OPENSSL_CONF_PATH" $env_error
 check_path "$OPENSSL_EXT_PATH" $env_error
 check_path "$OPENSSL_PASSIN_PATH" $env_error
+check_path "$ROOT_CA_PATH" $env_error
 
 echo "Verifying intermediate CA..."
-if ! openssl verify -CAfile "$CERTS_DIR/cacert.pem" "$INTERMEDIATE_CA_BUNDLE_PATH" ;
+if ! openssl verify -CAfile "$ROOT_CA_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" ;
 then
   echo "Unable to verify intermediate CA against root CA!"
   exit $cert_error
@@ -98,31 +99,39 @@ remove_path () {
   fi
 }
 
-remove_paths () {
-  remove_path "$HOST_KEY_PATH"
-  remove_path "$HOST_CSR_PATH"
-  remove_path "$HOST_CERT_PATH"
-}
-
 echo "Checking for existing certificate at $HOST_CERT_PATH..."
 overwrite="false"
 if [[ -a "$HOST_CERT_PATH" ]]
 then
-  vared -p 'Found existing certificate file - Overwrite? ' -c tmp
-  re='^[yY](es)?$'
+  vared -p 'Found existing certificate file - Revoke and replace? ' -c tmp
+  re='^[yY][eE]?[sS]?$'
   if [[ $tmp =~ $re ]]
   then
     overwrite="true"
   fi
 fi
 
-if [[ $overwrite == "true" ]]
+if [[ $overwrite == "true" || ! -a "$HOST_CERT_PATH" ]]
 then
   echo "Creating new host certificate for $HOST_NAME..."
   if [[ -a "$HOST_KEY_PATH" ]]
   then
-    echo "Removing existing $HOST_NAME key..."
-    remove_path "$HOST_KEY_PATH"
+    echo "Revoking existing $HOST_NAME certificate..."
+    if openssl ca \
+      -config $OPENSSL_CONF_PATH \
+      -revoke $HOST_CERT_PATH \
+      -passin "file:$OPENSSL_PASSIN_PATH" ;
+    then
+      echo "Certificate successfully revoked! Archiving..."
+      if ! mv "$HOST_KEY_PATH" "$REVOKED_CERTS_DIR/${HOST_KEY_PATH:t}.$(date +%s)" ;
+      then
+        echo "Error: unable to archive revoked certificate at $HOST_KEY_PATH"
+        exit $cert_error
+      fi
+    else
+      echo "Error: unable to revoke existing certificate"
+      exit $cert_error
+    fi
   fi
   echo "Generating new key for $HOST_NAME..."
   if ! openssl genrsa -out "$HOST_KEY_PATH" 4096 ;
@@ -168,24 +177,30 @@ then
   -keyfile "$INTERMEDIATE_CA_KEY_PATH" ;
   then
     echo "Error creating server certificate!"
-    remove_paths
     exit $cert_error
   fi
   cat "$HOST_CERT_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" > "$HOST_CA_BUNDLE_PATH"
   if ! openssl x509 -in "$HOST_CA_BUNDLE_PATH" -out "$HOST_CA_BUNDLE_PATH" -outform PEM ;
   then
     echo "Error converting server certificate to PEM!"
-    remove_paths
     exit $cert_error
   fi
   else
-    echo "Found existing certificate!"
+    echo "Using existing certificate..."
 fi
 
 if ! [[ -a "$HOST_KEY_PATH" ]]
 then
-  echo "$HOST_NAME certificate key at $HOST_KEY_PATH is missing!"
+  echo "Error: $HOST_NAME certificate key at $HOST_KEY_PATH is missing"
   exit $env_error
+fi
+echo "Verifying certificate chain..."
+if ! openssl verify -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" "$HOST_CA_BUNDLE_PATH";
+then
+  echo "Error: Unable to verify $HOST_CA_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH"
+  exit $cert_error
+else
+  echo "  ...Verified $HOST_CA_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH"
 fi
 
 echo "Removing podman secrets..."
