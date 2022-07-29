@@ -2,23 +2,26 @@
 # Creates a certificate, private key, and CA bundle suitable for use in TLS for the host name specified as the
 # first argument, and stores the location of the corresponding files as podman secrets. The intermediate CA and
 # related configuration should be specified in a .env file in this script's directory.
-
-if [[ $# == 0 ]]
-then
-  echo "Usage: sh create_cert.sh <host name> [subjectAlternativeName1 subjectAlternativeName2 ...]"
-  exit 0
-fi
 env_error=1
 cert_error=2
 podman_error=3
 
-echo "Checking hostname..."
-re='^[a-z0-9][a-z0-9-]*[a-z0-9]$'
-if ! [[ $1 =~ $re ]]
+if [[ $# == 0 ]]
 then
-  echo "Error: the host name $1 is malformed; it must match this expression: $re"
+  echo "Usage: sh create_cert.sh <host name> [subjectAlternativeName1 subjectAlternativeName2 ...]"
   exit $env_error
 fi
+
+echo "Creating certificate...Checking hostnames $*..."
+re='^([a-z0-9][a-z0-9-]*[a-z0-9] ?)$'
+for item in ${argv[1,$#]}
+do
+  if ! [[ $item =~ $re ]]
+  then
+    echo "Error: the host name $item is malformed; each must match this expression: ([a-z0-9][a-z0-9-]*[a-z0-9])" >&2;
+    exit $env_error
+  fi
+done
 
 HOST_NAME=$1
 THIS_DIR="$(dirname "$(readlink -f "%N" ${0:A})")"
@@ -28,7 +31,7 @@ source "$THIS_DIR/check_path.sh"
 check_path .env $env_error
 if [[ $? != 0 ]]
 then
-  echo "Unable to find .env file!"
+  echo "Error: Unable to find .env file" >&2;
   exit $env_error
 fi
 source "$THIS_DIR/.env"
@@ -37,23 +40,6 @@ if [[ -a ${THIS_DIR}/.dev_env ]]
 then
   source "$THIS_DIR/.dev_env"
 fi
-
-
-TLS_DIR
-COUNTRY
-STATE
-LOCALE
-ORGANIZATION
-ORGANIZATIONAL_UNIT
-CERTS_DIR
-REVOKED_CERTS_DIR
-PRIVATE_KEY_DIR
-OPENSSL_CONF_PATH
-OPENSSL_EXT_PATH
-OPENSSL_PASSIN_PATH
-ROOT_CA_PATH
-INTERMEDIATE_CA_KEY_PATH
-INTERMEDIATE_CA_BUNDLE_PATH
 
 if ! [[ \
 -n $TLS_DIR \
@@ -106,7 +92,7 @@ check_path "$ROOT_CA_PATH" $env_error
 echo "Verifying intermediate CA..."
 if ! openssl verify -CAfile "$ROOT_CA_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" ;
 then
-  echo "Unable to verify intermediate CA against root CA!"
+  echo "Error: Unable to verify intermediate CA against root CA" >&2;
   exit $cert_error
 fi
 
@@ -115,7 +101,12 @@ HOST_CSR_PATH="$CERTS_DIR/$HOST_NAME.csr"
 HOST_CERT_PATH="$CERTS_DIR/$HOST_NAME.crt"
 HOST_CA_BUNDLE_PATH="$CERTS_DIR/$HOST_NAME-ca-bundle.pem"
 TEMP_EXT_PATH="$THIS_DIR/temp_server_ext.cnf"
-
+echo "
+  HOST_KEY_PATH=$HOST_KEY_PATH
+  HOST_CSR_PATH=$HOST_CSR_PATH
+  HOST_CERT_PATH=$HOST_CERT_PATH
+  HOST_CA_BUNDLE_PATH=$HOST_CA_BUNDLE_PATH
+  TEMP_EXT_PATH=$TEMP_EXT_PATH\n"
 remove_path () {
   if [[ -a "$1" ]]
   then
@@ -149,18 +140,18 @@ then
       echo "Certificate successfully revoked! Archiving..."
       if ! mv "$HOST_KEY_PATH" "$REVOKED_CERTS_DIR/${HOST_KEY_PATH:t}.$(date +%s)" ;
       then
-        echo "Error: unable to archive revoked certificate at $HOST_KEY_PATH"
+        echo "Error: unable to archive revoked certificate at $HOST_KEY_PATH" >&2;
         exit $cert_error
       fi
     else
-      echo "Error: unable to revoke existing certificate"
+      echo "Error: unable to revoke existing certificate" >&2;
       exit $cert_error
     fi
   fi
   echo "Generating new key for $HOST_NAME..."
   if ! openssl genrsa -out "$HOST_KEY_PATH" 4096 ;
   then
-    echo "Error generating $HOST_NAME key!"
+    echo "Error: $HOST_NAME key generation failed" >&2;
     exit $cert_error
   else
     echo "Generated key at $HOST_KEY_PATH"
@@ -178,16 +169,12 @@ then
   then
     sans="\n"
     i=0
-    argv[-1]=()
-    while [[ -n ${argv[-1]} ]]
-    do {
-      sans+="DNS.$i = ${argv[-1]}\n"
-      argv[-1]=()
+    for item in ${argv[2,$#]}
+    do
+      sans+="DNS.$i = ${item}\n"
       i=$((i + 1))
-    }
     done
     cp "$OPENSSL_EXT_PATH" "$TEMP_EXT_PATH"
-    echo "$sans"
     echo "$sans" >> "$TEMP_EXT_PATH"
     unset OPENSSL_EXT_PATH && OPENSSL_EXT_PATH="$TEMP_EXT_PATH"
   fi
@@ -199,7 +186,7 @@ then
     -subj "$CERT_SUBJ" \
     -passin "file:$OPENSSL_PASSIN_PATH" ;
   then
-    echo "Error creating certificate signing request!"
+    echo "Error: creating certificate signing request failed" >&2;
     if [[ -a "$HOST_CSR_PATH" ]]
     then
       remove_path "$HOST_CSR_PATH"d
@@ -219,13 +206,13 @@ then
   -passin "file:$OPENSSL_PASSIN_PATH" \
   -keyfile "$INTERMEDIATE_CA_KEY_PATH" ;
   then
-    echo "Error creating server certificate!"
+    echo "Error: creating server certificate failed" >&2;
     exit $cert_error
   fi
   cat "$HOST_CERT_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" > "$HOST_CA_BUNDLE_PATH"
   if ! openssl x509 -in "$HOST_CA_BUNDLE_PATH" -out "$HOST_CA_BUNDLE_PATH" -outform PEM ;
   then
-    echo "Error converting server certificate to PEM!"
+    echo "Error: converting server certificate to PEM failed" >&2;
     exit $cert_error
   fi
   if [[ -a "$TEMP_EXT_PATH" ]]
@@ -238,13 +225,13 @@ fi
 
 if ! [[ -a "$HOST_KEY_PATH" ]]
 then
-  echo "Error: $HOST_NAME certificate key at $HOST_KEY_PATH is missing"
+  echo "Error: $HOST_NAME certificate key at $HOST_KEY_PATH is missing" >&2;
   exit $env_error
 fi
 echo "Verifying certificate chain..."
 if ! openssl verify -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" "$HOST_CA_BUNDLE_PATH";
 then
-  echo "Error: Unable to verify $HOST_CA_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH"
+  echo "Error: Unable to verify $HOST_CA_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH" >&2;
   exit $cert_error
 else
   echo "  ...Verified $HOST_CA_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH"

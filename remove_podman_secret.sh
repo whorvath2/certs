@@ -14,7 +14,7 @@ remove_secret () {
   then
     if ! podman secret rm "$1"
     then
-      echo "Error removing secret named $1!"
+      echo "Error removing secret named $1!" >&2;
       source "$THIS_DIR/check_err_code.sh"
       code=$(check_err_code $2)
       return $code

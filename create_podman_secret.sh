@@ -10,12 +10,12 @@ create_secret () {
   echo "Creating podman secret $1...Checking podman vm..."
   if ! source "$THIS_DIR/podman_vm.sh" && start_vm ;
   then
-    echo "Error: podman vm not running"
+    echo "Error: podman vm not running" >&2;
     return 1
   fi
   if ! podman secret create "$1" "$2" ;
   then
-    echo "Error creating secret named $1!"
+    echo "Error creating secret named $1!" >&2;
     source "$THIS_DIR/check_err_code.sh"
     code=$(check_err_code $3)
     return $code
