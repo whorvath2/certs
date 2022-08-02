@@ -237,21 +237,49 @@ else
   echo "  ...Verified $HOST_CA_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH"
 fi
 
+kill_openssl_server () {
+  server_pid=$(ps -a | grep "[o]penssl s_server")
+  if [[ -n $server_pid ]]
+  then
+    echo $server_pid | awk "{ print \$1 }"
+    kill "$(echo $server_pid | awk "{ print \$1 }")"
+  fi
+}
+echo "Checking certificate using openssl client and server..."
+kill_openssl_server
+openssl s_server -pass "file:$OPENSSL_PASSIN_PATH" -key "$HOST_KEY_PATH" -cert "$HOST_CA_BUNDLE_PATH" -accept 44330 -www &
+echo "  ...server started..."
+cat "Q" > q.txt
+if ! openssl s_client -verify_return_error -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" -connect localhost:44330 < q.txt ;
+then
+  echo "Error: certificate is invalid"
+  kill_openssl_server
+  rm q.txt
+  exit $env_error
+else
+  echo "Success: connected to openssl server"
+  rm q.txt
+  kill_openssl_server
+fi
+
 echo "Removing podman secrets..."
 source "$THIS_DIR/remove_podman_secret.sh"
 remove_secret "${HOST_NAME}_cert_key" $podman_error
 remove_secret "${HOST_NAME}_cert_pub" $podman_error
 remove_secret "${HOST_NAME}_cert_bundle_pub" $podman_error
+remove_secret "intermediate_cert_bundle_pub" $podman_error
 
 echo "Creating podman secrets..."
 source "$THIS_DIR/create_podman_secret.sh"
 create_secret "${HOST_NAME}_cert_key" "$HOST_KEY_PATH" $podman_error
 create_secret "${HOST_NAME}_cert_pub" "$HOST_CERT_PATH" $podman_error
 create_secret "${HOST_NAME}_cert_bundle_pub" "$HOST_CA_BUNDLE_PATH" $podman_error
+create_secret "intermediate_cert_bundle_pub" "$INTERMEDIATE_CA_BUNDLE_PATH"
 
-echo "Created podman secrets: ${HOST_NAME}_cert_key, ${HOST_NAME}_cert_pub, ${HOST_NAME}_ca_bundle_pub"
+echo "Created podman secrets: ${HOST_NAME}_cert_key, ${HOST_NAME}_cert_pub, ${HOST_NAME}_ca_bundle_pub, and intermediate_cert_bundle_pub"
 
 export HOST_KEY_PATH
 export HOST_CERT_PATH
 export HOST_CA_BUNDLE_PATH
-echo "Exported HOST_KEY_PATH, HOST_CERT_PATH, HOST_CA_BUNDLE_PATH"
+export INTERMEDIATE_CA_BUNDLE_PATH
+echo "Exported HOST_KEY_PATH, HOST_CERT_PATH, HOST_CA_BUNDLE_PATH, and INTERMEDIATE_CA_BUNDLE_PATH"
