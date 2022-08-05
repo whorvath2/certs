@@ -26,6 +26,7 @@ done
 HOST_NAME=$1
 THIS_DIR="$(dirname "$(readlink -f "%N" ${0:A})")"
 export THIS_DIR
+
 echo "Checking environment..."
 source "$THIS_DIR/check_path.sh"
 check_path .env $env_error
@@ -35,46 +36,13 @@ then
   exit $env_error
 fi
 source "$THIS_DIR/.env"
-
 if [[ -a ${THIS_DIR}/.dev_env ]]
 then
   source "$THIS_DIR/.dev_env"
 fi
-
-if ! [[ \
--n $TLS_DIR \
-&& -n $COUNTRY \
-&& -n $STATE \
-&& -n $LOCALE \
-&& -n $ORGANIZATION \
-&& -n $ORGANIZATIONAL_UNIT \
-&& -n $CERTS_DIR \
-&& -n $REVOKED_CERTS_DIR
-&& -n $PRIVATE_KEY_DIR \
-&& -n $OPENSSL_CONF_PATH \
-&& -n $OPENSSL_EXT_PATH \
-&& -n $OPENSSL_PASSIN_PATH \
-&& -n $INTERMEDIATE_CA_KEY_PATH \
-&& -n $INTERMEDIATE_CA_BUNDLE_PATH \
-&& -n $ROOT_CA_PATH \
-]] ;
+if ! . "$THIS_DIR/check_env.sh" ;
 then
-  echo "All needed environment variables aren't specified:
-  TLS_DIR: $TLS_DIR
-  COUNTRY: $COUNTRY
-  STATE: $STATE
-  LOCALE: $LOCALE
-  ORGANIZATION: $ORGANIZATION
-  ORGANIZATIONAL_UNIT: $ORGANIZATIONAL_UNIT
-  CERTS_DIR: $CERTS_DIR
-  REVOKED_CERTS_DIR: $REVOKED_CERTS_DIR
-  PRIVATE_KEY_DIR: $PRIVATE_KEY_DIR
-  OPENSSL_CONF_PATH: $OPENSSL_CONF_PATH
-  OPENSSL_EXT_PATH: $OPENSSL_EXT_PATH
-  OPENSSL_PASSIN_PATH: $OPENSSL_PASSIN_PATH
-  INTERMEDIATE_CA_KEY_PATH: $INTERMEDIATE_CA_KEY_PATH
-  INTERMEDIATE_CA_BUNDLE_PATH: $INTERMEDIATE_CA_BUNDLE_PATH
-  ROOT_CA_PATH: $ROOT_CA_PATH"
+  echo "Failed environment check."
   exit $env_error
 fi
 
@@ -99,14 +67,15 @@ fi
 HOST_KEY_PATH="$PRIVATE_KEY_DIR/$HOST_NAME-key.pem"
 HOST_CSR_PATH="$CERTS_DIR/$HOST_NAME.csr"
 HOST_CERT_PATH="$CERTS_DIR/$HOST_NAME.crt"
-HOST_CA_BUNDLE_PATH="$CERTS_DIR/$HOST_NAME-ca-bundle.pem"
+HOST_CERT_BUNDLE_PATH="$CERTS_DIR/$HOST_NAME-ca-bundle.pem"
 TEMP_EXT_PATH="$THIS_DIR/temp_server_ext.cnf"
 echo "
   HOST_KEY_PATH=$HOST_KEY_PATH
   HOST_CSR_PATH=$HOST_CSR_PATH
   HOST_CERT_PATH=$HOST_CERT_PATH
-  HOST_CA_BUNDLE_PATH=$HOST_CA_BUNDLE_PATH
-  TEMP_EXT_PATH=$TEMP_EXT_PATH\n"
+  HOST_CERT_BUNDLE_PATH=$HOST_CERT_BUNDLE_PATH
+  TEMP_EXT_PATH=$TEMP_EXT_PATH
+"
 remove_path () {
   if [[ -a "$1" ]]
   then
@@ -165,6 +134,8 @@ then
 
   echo "Creating certificate signing request..."
   CERT_SUBJ="/C=$COUNTRY/ST=$STATE/L=$LOCALE/O=$ORGANIZATION/OU=$ORGANIZATIONAL_UNIT/CN=$HOST_NAME"
+  echo "  CSR subject: $CERT_SUBJ
+  Adding alternative names..."
   if [[ $# -gt 1 ]] ;
   then
     sans="\n"
@@ -179,12 +150,16 @@ then
     unset OPENSSL_EXT_PATH && OPENSSL_EXT_PATH="$TEMP_EXT_PATH"
   fi
 
+  echo "  Generating CSR..."
   if ! openssl req \
     -new \
+    -noenc \
+    -verify \
     -key "$HOST_KEY_PATH" \
     -out "$HOST_CSR_PATH" \
-    -subj "$CERT_SUBJ" \
-    -passin "file:$OPENSSL_PASSIN_PATH" ;
+    -subj "$CERT_SUBJ" ;
+#    -subj "$CERT_SUBJ" \
+#    -passin "file:$OPENSSL_PASSIN_PATH" ;
   then
     echo "Error: creating certificate signing request failed" >&2;
     if [[ -a "$HOST_CSR_PATH" ]]
@@ -193,6 +168,7 @@ then
     fi
     exit $cert_error
   fi
+  check_path "$HOST_CSR_PATH" $cert_error
 
   if ! openssl ca \
   -batch \
@@ -203,18 +179,13 @@ then
   -in "$HOST_CSR_PATH" \
   -out "$HOST_CERT_PATH" \
   -days 3650 \
-  -passin "file:$OPENSSL_PASSIN_PATH" \
-  -keyfile "$INTERMEDIATE_CA_KEY_PATH" ;
+  -keyfile "$INTERMEDIATE_CA_KEY_PATH" \
+  -passin "file:$OPENSSL_PASSIN_PATH" ;
   then
     echo "Error: creating server certificate failed" >&2;
     exit $cert_error
   fi
-  cat "$HOST_CERT_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" > "$HOST_CA_BUNDLE_PATH"
-  if ! openssl x509 -in "$HOST_CA_BUNDLE_PATH" -out "$HOST_CA_BUNDLE_PATH" -outform PEM ;
-  then
-    echo "Error: converting server certificate to PEM failed" >&2;
-    exit $cert_error
-  fi
+  cat "$HOST_CERT_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" > "$HOST_CERT_BUNDLE_PATH"
   if [[ -a "$TEMP_EXT_PATH" ]]
   then
     rm "$TEMP_EXT_PATH"
@@ -229,28 +200,57 @@ then
   exit $env_error
 fi
 echo "Verifying certificate chain..."
-if ! openssl verify -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" "$HOST_CA_BUNDLE_PATH";
+if ! openssl verify -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" "$HOST_CERT_BUNDLE_PATH";
 then
-  echo "Error: Unable to verify $HOST_CA_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH" >&2;
+  echo "Error: Unable to verify $HOST_CERT_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH" >&2;
   exit $cert_error
 else
-  echo "  ...Verified $HOST_CA_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH"
+  echo "  ...Verified $HOST_CERT_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH"
 fi
 
-kill_openssl_server () {
-  server_pid=$(ps -a | grep "[o]penssl s_server")
-  if [[ -n $server_pid ]]
+set_openssl_server_pid () {
+  server_line=$(ps -a | grep "[o]penssl s_server")
+  if [[ -n "$server_line" ]]
   then
-    echo $server_pid | awk "{ print \$1 }"
-    kill "$(echo $server_pid | awk "{ print \$1 }")"
+    server_pid=$(echo $server_line | awk "{ print \$1 }")
+  else
+    server_pid=0
+  fi
+  echo "server_pid=$server_pid"
+}
+
+kill_openssl_server () {
+  echo "Killing openssl s_server if it is running..."
+  set_openssl_server_pid
+  if [[ $server_pid -gt 0 ]]
+  then
+    kill $server_pid
   fi
 }
+
 echo "Checking certificate using openssl client and server..."
 kill_openssl_server
-openssl s_server -pass "file:$OPENSSL_PASSIN_PATH" -key "$HOST_KEY_PATH" -cert "$HOST_CA_BUNDLE_PATH" -accept 44330 -www &
+echo "Starting openssl s_server...
+  HOST_KEY_PATH: $HOST_KEY_PATH
+  HOST_CERT_BUNDLE_PATH: $HOST_CERT_BUNDLE_PATH
+"
+openssl s_server \
+  -key "$HOST_KEY_PATH" \
+  -cert "$HOST_CERT_BUNDLE_PATH" \
+  -accept 44330 \
+  -www &
+sleep 3
+set_openssl_server_pid
+if [[ $server_pid -eq 0  ]]
+then
+  echo "Error: openssl_server failed to start"
+  exit $env_error
+fi
 echo "  ...server started..."
-cat "Q" > q.txt
-if ! openssl s_client -verify_return_error -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" -connect localhost:44330 < q.txt ;
+
+echo "Q" > q.txt
+echo "Checking connection with CAfile $INTERMEDIATE_CA_BUNDLE_PATH..."
+if ! openssl s_client -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" -connect localhost:44330 < q.txt ;
 then
   echo "Error: certificate is invalid"
   kill_openssl_server
@@ -268,18 +268,38 @@ remove_secret "${HOST_NAME}_cert_key" $podman_error
 remove_secret "${HOST_NAME}_cert_pub" $podman_error
 remove_secret "${HOST_NAME}_cert_bundle_pub" $podman_error
 remove_secret "intermediate_cert_bundle_pub" $podman_error
+remove_secret "intermediate_cert_pub" $podman_error
+remove_secret "root_ca_pub" $podman_error
 
 echo "Creating podman secrets..."
 source "$THIS_DIR/create_podman_secret.sh"
 create_secret "${HOST_NAME}_cert_key" "$HOST_KEY_PATH" $podman_error
 create_secret "${HOST_NAME}_cert_pub" "$HOST_CERT_PATH" $podman_error
-create_secret "${HOST_NAME}_cert_bundle_pub" "$HOST_CA_BUNDLE_PATH" $podman_error
+create_secret "${HOST_NAME}_cert_bundle_pub" "$HOST_CERT_BUNDLE_PATH" $podman_error
 create_secret "intermediate_cert_bundle_pub" "$INTERMEDIATE_CA_BUNDLE_PATH"
+create_secret "intermediate_cert_pub" $INTERMEDIATE_CERT_PATH
+create_secret "root_ca_pub" $ROOT_CA_PATH
 
-echo "Created podman secrets: ${HOST_NAME}_cert_key, ${HOST_NAME}_cert_pub, ${HOST_NAME}_ca_bundle_pub, and intermediate_cert_bundle_pub"
+echo "Created podman secrets:
+  ${HOST_NAME}_cert_key
+  ${HOST_NAME}_cert_pub
+  ${HOST_NAME}_ca_bundle_pub
+  intermediate_cert_bundle_pub
+  intermediate_cert_pub
+  root_ca_pub
+"
 
 export HOST_KEY_PATH
 export HOST_CERT_PATH
-export HOST_CA_BUNDLE_PATH
+export HOST_CERT_BUNDLE_PATH
 export INTERMEDIATE_CA_BUNDLE_PATH
-echo "Exported HOST_KEY_PATH, HOST_CERT_PATH, HOST_CA_BUNDLE_PATH, and INTERMEDIATE_CA_BUNDLE_PATH"
+export INTERMEDIATE_CERT_PATH
+export ROOT_CA_PATH
+echo "Exported environment variables:
+  HOST_KEY_PATH
+  HOST_CERT_PATH
+  HOST_CERT_BUNDLE_PATH
+  INTERMEDIATE_CA_BUNDLE_PATH
+  INTERMEDIATE_CERT_PATH
+  ROOT_CA_PATH
+"
