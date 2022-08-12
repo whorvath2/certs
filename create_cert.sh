@@ -153,7 +153,6 @@ then
   echo "  Generating CSR..."
   if ! openssl req \
     -new \
-    -noenc \
     -verify \
     -key "$HOST_KEY_PATH" \
     -out "$HOST_CSR_PATH" \
@@ -267,7 +266,7 @@ source "$THIS_DIR/remove_podman_secret.sh"
 remove_secret "${HOST_NAME}_cert_key" $podman_error
 remove_secret "${HOST_NAME}_cert_pub" $podman_error
 remove_secret "${HOST_NAME}_cert_bundle_pub" $podman_error
-remove_secret "intermediate_cert_bundle_pub" $podman_error
+remove_secret "intermediate_ca_bundle_pub" $podman_error
 remove_secret "intermediate_cert_pub" $podman_error
 remove_secret "root_ca_pub" $podman_error
 
@@ -276,15 +275,15 @@ source "$THIS_DIR/create_podman_secret.sh"
 create_secret "${HOST_NAME}_cert_key" "$HOST_KEY_PATH" $podman_error
 create_secret "${HOST_NAME}_cert_pub" "$HOST_CERT_PATH" $podman_error
 create_secret "${HOST_NAME}_cert_bundle_pub" "$HOST_CERT_BUNDLE_PATH" $podman_error
-create_secret "intermediate_cert_bundle_pub" "$INTERMEDIATE_CA_BUNDLE_PATH"
+create_secret "intermediate_ca_bundle_pub" "$INTERMEDIATE_CA_BUNDLE_PATH"
 create_secret "intermediate_cert_pub" $INTERMEDIATE_CERT_PATH
 create_secret "root_ca_pub" $ROOT_CA_PATH
 
 echo "Created podman secrets:
   ${HOST_NAME}_cert_key
   ${HOST_NAME}_cert_pub
-  ${HOST_NAME}_ca_bundle_pub
-  intermediate_cert_bundle_pub
+  ${HOST_NAME}_cert_bundle_pub
+  intermediate_ca_bundle_pub
   intermediate_cert_pub
   root_ca_pub
 "
