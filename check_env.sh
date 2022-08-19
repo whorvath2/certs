@@ -1,8 +1,7 @@
 #!/bin/zsh
 
 if ! [[ \
- -n $TLS_DIR \
- && -n $COUNTRY \
+ -n $COUNTRY \
  && -n $STATE \
  && -n $LOCALE \
  && -n $ORGANIZATION \

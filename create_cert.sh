@@ -47,7 +47,6 @@ then
 fi
 
 echo "Checking paths..."
-check_path "$TLS_DIR" $env_error
 check_path "$CERTS_DIR" $env_error
 check_path "$PRIVATE_KEY_DIR" $env_error
 check_path "$INTERMEDIATE_CA_KEY_PATH" $env_error
