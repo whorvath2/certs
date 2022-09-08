@@ -86,9 +86,9 @@ echo "Checking for existing certificate at $HOST_CERT_PATH..."
 overwrite="false"
 if [[ -a "$HOST_CERT_PATH" ]]
 then
-  vared -p 'Found existing certificate file - Revoke and replace? ' -c tmp
+  vared -p 'Found existing certificate file - Revoke and replace? ' -c revoke
   re='^[yY][eE]?[sS]?$'
-  if [[ $tmp =~ $re ]]
+  if [[ $revoke =~ $re ]]
   then
     overwrite="true"
   fi
