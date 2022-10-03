@@ -29,7 +29,12 @@ export THIS_DIR
 
 echo "Checking environment..."
 source "$THIS_DIR/check_path.sh"
-check_path .env $env_error
+if ! check_path .env
+then
+  echo "Error: .env not found"
+  exit $env_error
+fi
+
 if [[ $? != 0 ]]
 then
   echo "Error: Unable to find .env file" >&2;
@@ -47,14 +52,18 @@ then
 fi
 
 echo "Checking paths..."
-check_path "$CERTS_DIR" $env_error
-check_path "$PRIVATE_KEY_DIR" $env_error
-check_path "$INTERMEDIATE_CA_KEY_PATH" $env_error
-check_path "$INTERMEDIATE_CA_BUNDLE_PATH" $env_error
-check_path "$OPENSSL_CONF_PATH" $env_error
-check_path "$OPENSSL_EXT_PATH" $env_error
-check_path "$OPENSSL_PASSIN_PATH" $env_error
-check_path "$ROOT_CA_PATH" $env_error
+if ! check_path "$CERTS_DIR" \
+"$PRIVATE_KEY_DIR" \
+"$INTERMEDIATE_CA_KEY_PATH" \
+"$INTERMEDIATE_CA_BUNDLE_PATH" \
+"$OPENSSL_CONF_PATH" \
+"$OPENSSL_EXT_PATH" \
+"$OPENSSL_PASSIN_PATH" \
+"$ROOT_CA_PATH" ;
+then
+  echo "Error: Unable to find all needed certificate-related paths"
+  return $cert_error
+fi
 
 echo "Verifying intermediate CA..."
 if ! openssl verify -CAfile "$ROOT_CA_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" ;
@@ -171,7 +180,11 @@ then
     fi
     exit $cert_error
   fi
-  check_path "$HOST_CSR_PATH" $cert_error
+  if ! check_path "$HOST_CSR_PATH"
+  then
+    echo "Error: file at $HOST_CSR_PATH is missing"
+    exit $cert_error
+  fi
 
   if ! openssl ca \
   -batch \
@@ -265,21 +278,31 @@ else
   kill_openssl_server
 fi
 
+echo "Checking podman VM..."
+if ! source "$THIS_DIR/podman_vm.sh" && start_vm ;
+then
+  echo "Error: podman vm not running" >&2;
+  exit $podman_error
+fi
+
 echo "Removing podman secrets..."
-source "$THIS_DIR/remove_podman_secret.sh"
-remove_secret "${HOST_NAME}_cert_key" $podman_error
-remove_secret "${HOST_NAME}_cert_pub" $podman_error
-remove_secret "${HOST_NAME}_cert_bundle_pub" $podman_error
-remove_secret "intermediate_ca_bundle_pub" $podman_error
-remove_secret "root_ca_pub" $podman_error
+# If the secrets don't exist, we don't care, so we'll swallow the error messages
+podman secret rm "${HOST_NAME}_cert_key" >$2;
+podman secret rm "${HOST_NAME}_cert_pub" >$2;
+podman secret rm "${HOST_NAME}_cert_bundle_pub" >$2;
+podman secret rm "intermediate_ca_bundle_pub" >$2;
+podman secret rm "root_ca_pub" >$2;
 
 echo "Creating podman secrets..."
-source "$THIS_DIR/create_podman_secret.sh"
-create_secret "${HOST_NAME}_cert_key" "$HOST_KEY_PATH" $podman_error
-create_secret "${HOST_NAME}_cert_pub" "$HOST_CERT_PATH" $podman_error
-create_secret "${HOST_NAME}_cert_bundle_pub" "$HOST_CERT_BUNDLE_PATH" $podman_error
-create_secret "intermediate_ca_bundle_pub" "$INTERMEDIATE_CA_BUNDLE_PATH" $podman_error
-create_secret "root_ca_pub" "$ROOT_CA_PATH" $podman_error
+if ! podman secret create "${HOST_NAME}_cert_key" "$HOST_KEY_PATH" \
+&& podman secret create "${HOST_NAME}_cert_pub" "$HOST_CERT_PATH" \
+&& podman secret create "${HOST_NAME}_cert_bundle_pub" "$HOST_CERT_BUNDLE_PATH" \
+&& podman secret create "intermediate_ca_bundle_pub" "$INTERMEDIATE_CA_BUNDLE_PATH" \
+&& podman secret create "root_ca_pub" "$ROOT_CA_PATH"
+then
+  echo "Error: unable to create podman secrets"
+  return $podman_error
+fi
 
 echo "Created podman secrets:
   ${HOST_NAME}_cert_key

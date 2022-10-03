@@ -1,9 +1,9 @@
 #!/bin/zsh
-# Checks if a named podman VM is currently running and starts it if it isn't. If no VM name is specified, the default
-# machine is used.
+# Checks if a default podman VM is currently running and starts it if it isn't.
 
 default_machine () {
-  podman machine list --noheading --format="{{.Name}}\t{{.Default}}" | \
+  # Find the nam of the default podman machine in this environment.
+  if ! podman machine list --noheading --format="{{.Name}}\t{{.Default}}" | \
     while IFS= read -r line
     do
       if [[ $(echo "$line" | grep -E "true") == 0 ]]
@@ -12,11 +12,22 @@ default_machine () {
         return
       fi
     done
+  then
+    echo ""
+    return
+  fi
   echo "podman-machine-default"
 }
 
 start_vm () {
+  # Get the default podman machine and return an error if there is none
   machine_name=${1:-$(default_machine)}
+  if [[ -n "$machine_name" ]]
+  then
+    echo "Error: no default podman machine name found"
+    return 1
+  fi
+
   echo "Checking for $machine_name..."
   local found=0
   while read -r line

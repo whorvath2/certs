@@ -1,17 +1,23 @@
 #!/bin/zsh
+# Checks to verify that podman and openssl are installed, and that all required environment variables needed for create_cert.sh to work. are set.
 
+# Verify podman is installed
+# TODO check version number as well
 if ! podman --version &>/dev/null ;
 then
   echo "podman is missing"
   return 1
 fi
 
+# Verify openssl is installed
+# TODO check version number as well
 if ! openssl version &>/dev/null ;
 then
   echo "openssl is missing"
   return 1
 fi
 
+# Verify environment variables are set
 if ! [[ \
  -n $COUNTRY \
  && -n $STATE \
