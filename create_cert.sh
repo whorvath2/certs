@@ -83,11 +83,11 @@ remove_path () {
 }
 
 echo "Checking for existing certificate at $HOST_CERT_PATH..."
+re='^[yY][eE]?[sS]?$'
 overwrite="false"
 if [[ -a "$HOST_CERT_PATH" ]]
 then
   vared -p 'Found existing certificate file - Revoke and replace? ' -c revoke
-  re='^[yY][eE]?[sS]?$'
   if [[ $revoke =~ $re ]]
   then
     overwrite="true"
@@ -101,19 +101,26 @@ then
   then
     echo "Revoking existing $HOST_NAME certificate..."
     if openssl ca \
-      -config $OPENSSL_CONF_PATH \
-      -revoke $HOST_CERT_PATH \
+      -config "$OPENSSL_CONF_PATH" \
+      -revoke "$HOST_CERT_PATH" \
       -passin "file:$OPENSSL_PASSIN_PATH" ;
     then
       echo "Certificate successfully revoked! Archiving..."
       if ! mv "$HOST_KEY_PATH" "$REVOKED_CERTS_DIR/${HOST_KEY_PATH:t}.$(date +%s)" ;
       then
-        echo "Error: unable to archive revoked certificate at $HOST_KEY_PATH" >&2;
+        echo "Error: unable to move revoked certificate at $HOST_KEY_PATH" >&2;
         exit $cert_error
       fi
     else
       echo "Error: unable to revoke existing certificate" >&2;
-      exit $cert_error
+      vared -p 'Ignore and continue? ' -c keep_going
+      re='^[yY][eE]?[sS]?$'
+      if [[ $keep_going =~ $re ]]
+      then
+        echo "...Continuing creation new certificate"
+      else
+        exit $cert_error
+      fi
     fi
   fi
   echo "Generating new key for $HOST_NAME..."
@@ -156,8 +163,6 @@ then
     -key "$HOST_KEY_PATH" \
     -out "$HOST_CSR_PATH" \
     -subj "$CERT_SUBJ" ;
-#    -subj "$CERT_SUBJ" \
-#    -passin "file:$OPENSSL_PASSIN_PATH" ;
   then
     echo "Error: creating certificate signing request failed" >&2;
     if [[ -a "$HOST_CSR_PATH" ]]
@@ -266,7 +271,6 @@ remove_secret "${HOST_NAME}_cert_key" $podman_error
 remove_secret "${HOST_NAME}_cert_pub" $podman_error
 remove_secret "${HOST_NAME}_cert_bundle_pub" $podman_error
 remove_secret "intermediate_ca_bundle_pub" $podman_error
-remove_secret "intermediate_cert_pub" $podman_error
 remove_secret "root_ca_pub" $podman_error
 
 echo "Creating podman secrets..."
@@ -274,16 +278,14 @@ source "$THIS_DIR/create_podman_secret.sh"
 create_secret "${HOST_NAME}_cert_key" "$HOST_KEY_PATH" $podman_error
 create_secret "${HOST_NAME}_cert_pub" "$HOST_CERT_PATH" $podman_error
 create_secret "${HOST_NAME}_cert_bundle_pub" "$HOST_CERT_BUNDLE_PATH" $podman_error
-create_secret "intermediate_ca_bundle_pub" "$INTERMEDIATE_CA_BUNDLE_PATH"
-create_secret "intermediate_cert_pub" $INTERMEDIATE_CERT_PATH
-create_secret "root_ca_pub" $ROOT_CA_PATH
+create_secret "intermediate_ca_bundle_pub" "$INTERMEDIATE_CA_BUNDLE_PATH" $podman_error
+create_secret "root_ca_pub" "$ROOT_CA_PATH" $podman_error
 
 echo "Created podman secrets:
   ${HOST_NAME}_cert_key
   ${HOST_NAME}_cert_pub
   ${HOST_NAME}_cert_bundle_pub
   intermediate_ca_bundle_pub
-  intermediate_cert_pub
   root_ca_pub
 "
 
@@ -291,13 +293,11 @@ export HOST_KEY_PATH
 export HOST_CERT_PATH
 export HOST_CERT_BUNDLE_PATH
 export INTERMEDIATE_CA_BUNDLE_PATH
-export INTERMEDIATE_CERT_PATH
 export ROOT_CA_PATH
 echo "Exported environment variables:
   HOST_KEY_PATH
   HOST_CERT_PATH
   HOST_CERT_BUNDLE_PATH
   INTERMEDIATE_CA_BUNDLE_PATH
-  INTERMEDIATE_CERT_PATH
   ROOT_CA_PATH
 "

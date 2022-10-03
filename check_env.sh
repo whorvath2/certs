@@ -1,5 +1,17 @@
 #!/bin/zsh
 
+if ! podman --version &>/dev/null ;
+then
+  echo "podman is missing"
+  return 1
+fi
+
+if ! openssl version &>/dev/null ;
+then
+  echo "openssl is missing"
+  return 1
+fi
+
 if ! [[ \
  -n $COUNTRY \
  && -n $STATE \
@@ -18,7 +30,6 @@ if ! [[ \
  ]] ;
  then
    echo "All needed environment variables aren't specified:
-   TLS_DIR: $TLS_DIR
    COUNTRY: $COUNTRY
    STATE: $STATE
    LOCALE: $LOCALE
