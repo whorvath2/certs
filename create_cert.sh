@@ -18,7 +18,7 @@ for item in ${argv[1,$#]}
 do
   if ! [[ $item =~ $re ]]
   then
-    echo "Error: the host name $item is malformed; each must match this expression: ([a-z0-9][a-z0-9-]*[a-z0-9])" >&2;
+    echo "Error: the host name $item is malformed; each must match this expression: ([a-z0-9][a-z0-9-]*[a-z0-9])" &>/dev/null
     exit $env_error
   fi
 done
@@ -37,7 +37,7 @@ fi
 
 if [[ $? != 0 ]]
 then
-  echo "Error: Unable to find .env file" >&2;
+  echo "Error: Unable to find .env file" &>/dev/null
   exit $env_error
 fi
 source "$THIS_DIR/.env"
@@ -62,13 +62,13 @@ if ! check_path "$CERTS_DIR" \
 "$ROOT_CA_PATH" ;
 then
   echo "Error: Unable to find all needed certificate-related paths"
-  return $cert_error
+  exit $env_error
 fi
 
 echo "Verifying intermediate CA..."
 if ! openssl verify -CAfile "$ROOT_CA_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" ;
 then
-  echo "Error: Unable to verify intermediate CA against root CA" >&2;
+  echo "Error: Unable to verify intermediate CA against root CA" &>/dev/null
   exit $cert_error
 fi
 
@@ -117,11 +117,11 @@ then
       echo "Certificate successfully revoked! Archiving..."
       if ! mv "$HOST_KEY_PATH" "$REVOKED_CERTS_DIR/${HOST_KEY_PATH:t}.$(date +%s)" ;
       then
-        echo "Error: unable to move revoked certificate at $HOST_KEY_PATH" >&2;
+        echo "Error: unable to move revoked certificate at $HOST_KEY_PATH" &>/dev/null
         exit $cert_error
       fi
     else
-      echo "Error: unable to revoke existing certificate" >&2;
+      echo "Error: unable to revoke existing certificate" &>/dev/null
       vared -p 'Ignore and continue? ' -c keep_going
       re='^[yY][eE]?[sS]?$'
       if [[ $keep_going =~ $re ]]
@@ -135,7 +135,7 @@ then
   echo "Generating new key for $HOST_NAME..."
   if ! openssl genrsa -out "$HOST_KEY_PATH" 4096 ;
   then
-    echo "Error: $HOST_NAME key generation failed" >&2;
+    echo "Error: $HOST_NAME key generation failed" &>/dev/null
     exit $cert_error
   else
     echo "Generated key at $HOST_KEY_PATH"
@@ -173,7 +173,7 @@ then
     -out "$HOST_CSR_PATH" \
     -subj "$CERT_SUBJ" ;
   then
-    echo "Error: creating certificate signing request failed" >&2;
+    echo "Error: creating certificate signing request failed" &>/dev/null
     if [[ -a "$HOST_CSR_PATH" ]]
     then
       remove_path "$HOST_CSR_PATH"d
@@ -198,7 +198,7 @@ then
   -keyfile "$INTERMEDIATE_CA_KEY_PATH" \
   -passin "file:$OPENSSL_PASSIN_PATH" ;
   then
-    echo "Error: creating server certificate failed" >&2;
+    echo "Error: creating server certificate failed" &>/dev/null
     exit $cert_error
   fi
   cat "$HOST_CERT_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" > "$HOST_CERT_BUNDLE_PATH"
@@ -212,13 +212,13 @@ fi
 
 if ! [[ -a "$HOST_KEY_PATH" ]]
 then
-  echo "Error: $HOST_NAME certificate key at $HOST_KEY_PATH is missing" >&2;
+  echo "Error: $HOST_NAME certificate key at $HOST_KEY_PATH is missing" &>/dev/null
   exit $env_error
 fi
 echo "Verifying certificate chain..."
 if ! openssl verify -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" "$HOST_CERT_BUNDLE_PATH";
 then
-  echo "Error: Unable to verify $HOST_CERT_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH" >&2;
+  echo "Error: Unable to verify $HOST_CERT_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH" &>/dev/null
   exit $cert_error
 else
   echo "  ...Verified $HOST_CERT_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH"
@@ -281,27 +281,43 @@ fi
 echo "Checking podman VM..."
 if ! source "$THIS_DIR/podman_vm.sh" && start_vm ;
 then
-  echo "Error: podman vm not running" >&2;
+  echo "Error: podman vm not running" &>/dev/null
   exit $podman_error
 fi
 
 echo "Removing podman secrets..."
 # If the secrets don't exist, we don't care, so we'll swallow the error messages
-podman secret rm "${HOST_NAME}_cert_key" >$2;
-podman secret rm "${HOST_NAME}_cert_pub" >$2;
-podman secret rm "${HOST_NAME}_cert_bundle_pub" >$2;
-podman secret rm "intermediate_ca_bundle_pub" >$2;
-podman secret rm "root_ca_pub" >$2;
+podman secret rm "${HOST_NAME}_cert_key" &>/dev/null
+podman secret rm "${HOST_NAME}_cert_pub" &>/dev/null
+podman secret rm "${HOST_NAME}_cert_bundle_pub" &>/dev/null
+podman secret rm "intermediate_ca_bundle_pub" &>/dev/null
+podman secret rm "root_ca_pub" &>/dev/null
 
 echo "Creating podman secrets..."
-if ! podman secret create "${HOST_NAME}_cert_key" "$HOST_KEY_PATH" \
-&& podman secret create "${HOST_NAME}_cert_pub" "$HOST_CERT_PATH" \
-&& podman secret create "${HOST_NAME}_cert_bundle_pub" "$HOST_CERT_BUNDLE_PATH" \
-&& podman secret create "intermediate_ca_bundle_pub" "$INTERMEDIATE_CA_BUNDLE_PATH" \
-&& podman secret create "root_ca_pub" "$ROOT_CA_PATH"
+if ! podman secret create "${HOST_NAME}_cert_key" "$HOST_KEY_PATH"
 then
-  echo "Error: unable to create podman secrets"
-  return $podman_error
+  echo "Error: unable to create podman secret $HOST_KEY_PATH"
+  exit $podman_error
+fi
+if ! podman secret create "${HOST_NAME}_cert_pub" "$HOST_CERT_PATH"
+then
+  echo "Error: unable to create podman secret $HOST_CERT_PATH"
+  exit $podman_error
+fi
+if ! podman secret create "${HOST_NAME}_cert_bundle_pub" "$HOST_CERT_BUNDLE_PATH"
+then
+  echo "Error: unable to create podman secret $HOST_CERT_BUNDLE_PATH"
+  exit $podman_error
+fi
+if ! podman secret create "intermediate_ca_bundle_pub" "$INTERMEDIATE_CA_BUNDLE_PATH"
+then
+  echo "Error: unable to create podman secret $INTERMEDIATE_CA_BUNDLE_PATH"
+  exit $podman_error
+fi
+if ! podman secret create "root_ca_pub" "$ROOT_CA_PATH"
+then
+  echo "Error: unable to create podman secret $ROOT_CA_PATH"
+  exit $podman_error
 fi
 
 echo "Created podman secrets:

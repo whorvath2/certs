@@ -41,7 +41,7 @@ start_vm () {
         echo "...$machine_name is not running. Starting..."
         if ! podman machine start "$machine_name" ;
         then
-          echo "Error: $machine_name failed to start" >&2;
+          echo "Error: $machine_name failed to start" &>/dev/null
           return 1
         fi
       else
@@ -52,7 +52,7 @@ start_vm () {
   done < <(podman machine list --noheading --format="{{.Name}}\t{{.Running}}")
   if [[ $found -eq 0 ]]
   then
-    echo "Error: $machine_name is not a known podman machine" >&2;
+    echo "Error: $machine_name is not a known podman machine" &>/dev/null
     return 1
   fi
   echo "Success: Podman machine $machine_name is running"
