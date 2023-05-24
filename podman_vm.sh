@@ -22,7 +22,7 @@ default_machine () {
 start_vm () {
   # Get the default podman machine and return an error if there is none
   machine_name=${1:-$(default_machine)}
-  if [[ -n "$machine_name" ]]
+  if ! [[ -n "$machine_name" ]]
   then
     echo "Error: no default podman machine name found"
     return 1
