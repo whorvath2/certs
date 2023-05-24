@@ -1,14 +1,13 @@
 #!/bin/zsh
-# Creates a certificate, private key, and CA bundle suitable for use in TLS for the host name specified as the
-# first argument, and stores the location of the corresponding files as podman secrets. The intermediate CA and
-# related configuration should be specified in a .env file in this script's directory.
+# This script creates a certificate, private key, and host-CA bundle from a pre-existing trusted root and intermediate CA that's suitable for use in TLS for the host name(s) specified as the arguments to the script. It als stores the location of the output files as podman secrets. The paths to the needed supporting files (e.g., the intermediate CA bundle) and the configuration for the subject of the certificate are  specified as environment variables. See README.md for additional information.
+
 env_error=1
 cert_error=2
 podman_error=3
 
 if [[ $# == 0 ]]
 then
-  echo "Usage: sh create_cert.sh <host name> [subjectAlternativeName1 subjectAlternativeName2 ...]"
+  echo "Usage: sh create_cert.sh <host name> [subjectAlternativeName] [...]"
   exit $env_error
 fi
 
@@ -18,7 +17,7 @@ for item in ${argv[1,$#]}
 do
   if ! [[ $item =~ $re ]]
   then
-    echo "Error: the host name $item is malformed; each must match this expression: ([a-z0-9][a-z0-9-]*[a-z0-9])" &>/dev/null
+    echo "Error: the host name $item is malformed; each must match this expression: ([a-z0-9][a-z0-9-]*[a-z0-9])" &> - 
     exit $env_error
   fi
 done
@@ -37,7 +36,7 @@ fi
 
 if [[ $? != 0 ]]
 then
-  echo "Error: Unable to find .env file" &>/dev/null
+  echo "Error: Unable to find .env file" &> - 
   exit $env_error
 fi
 source "$THIS_DIR/.env"
@@ -51,7 +50,7 @@ then
   exit $env_error
 fi
 
-echo "Checking paths..."
+echo "Verifying paths exist..."
 if ! check_path "$CERTS_DIR" \
 "$PRIVATE_KEY_DIR" \
 "$INTERMEDIATE_CA_KEY_PATH" \
@@ -65,10 +64,10 @@ then
   exit $env_error
 fi
 
-echo "Verifying intermediate CA..."
-if ! openssl verify -CAfile "$ROOT_CA_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" ;
+echo "Verifying intermediate CA bundle against root CA..."
+if ! openssl verify -CAfile "$ROOT_CA_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" 1> -  ;
 then
-  echo "Error: Unable to verify intermediate CA against root CA" &>/dev/null
+  echo "Error: Unable to verify intermediate CA bundle against root CA" &> - 
   exit $cert_error
 fi
 
@@ -84,6 +83,7 @@ echo "
   HOST_CERT_BUNDLE_PATH=$HOST_CERT_BUNDLE_PATH
   TEMP_EXT_PATH=$TEMP_EXT_PATH
 "
+
 remove_path () {
   if [[ -a "$1" ]]
   then
@@ -112,16 +112,16 @@ then
     if openssl ca \
       -config "$OPENSSL_CONF_PATH" \
       -revoke "$HOST_CERT_PATH" \
-      -passin "file:$OPENSSL_PASSIN_PATH" ;
+      -passin "file:$OPENSSL_PASSIN_PATH" 1> -  ;
     then
       echo "Certificate successfully revoked! Archiving..."
       if ! mv "$HOST_KEY_PATH" "$REVOKED_CERTS_DIR/${HOST_KEY_PATH:t}.$(date +%s)" ;
       then
-        echo "Error: unable to move revoked certificate at $HOST_KEY_PATH" &>/dev/null
+        echo "Error: unable to move revoked certificate at $HOST_KEY_PATH" &> - 
         exit $cert_error
       fi
     else
-      echo "Error: unable to revoke existing certificate" &>/dev/null
+      echo "Error: unable to revoke existing certificate" &> - 
       vared -p 'Ignore and continue? ' -c keep_going
       re='^[yY][eE]?[sS]?$'
       if [[ $keep_going =~ $re ]]
@@ -132,8 +132,11 @@ then
       fi
     fi
   fi
+
+  source "$THIS_DIR/gen_key.sh"
+  source "$THIS_DIR/maybe_rm.sh"
   echo "Generating new key for $HOST_NAME..."
-  if ! openssl genrsa -out "$HOST_KEY_PATH" 4096 ;
+  if ! generate_key
   then
     echo "Error: $HOST_NAME key generation failed" &>/dev/null
     exit $cert_error
@@ -141,11 +144,8 @@ then
     echo "Generated key at $HOST_KEY_PATH"
   fi
 
-  if [[ -a "$HOST_CSR_PATH" ]]
-  then
-    echo "Removing existing certificate signing request..."
-    remove_path "$HOST_CSR_PATH"
-  fi
+  echo "Removing existing certificate signing request..."
+  remove_path "$HOST_CSR_PATH"
 
   echo "Creating certificate signing request..."
   CERT_SUBJ="/C=$COUNTRY/ST=$STATE/L=$LOCALE/O=$ORGANIZATION/OU=$ORGANIZATIONAL_UNIT/CN=$HOST_NAME"
@@ -153,7 +153,7 @@ then
   Adding alternative names..."
   if [[ $# -gt 1 ]] ;
   then
-    sans="\n"
+    sans="subjectAltName = @alt_names\n\n[alt_names]\n"
     i=0
     for item in ${argv[2,$#]}
     do
@@ -171,13 +171,10 @@ then
     -verify \
     -key "$HOST_KEY_PATH" \
     -out "$HOST_CSR_PATH" \
-    -subj "$CERT_SUBJ" ;
+    -subj "$CERT_SUBJ" 1> -  ;
   then
-    echo "Error: creating certificate signing request failed" &>/dev/null
-    if [[ -a "$HOST_CSR_PATH" ]]
-    then
-      remove_path "$HOST_CSR_PATH"d
-    fi
+    echo "Error: creating certificate signing request failed" &> -
+    remove_path "$HOST_CSR_PATH"
     exit $cert_error
   fi
   if ! check_path "$HOST_CSR_PATH"
@@ -186,6 +183,7 @@ then
     exit $cert_error
   fi
 
+  echo "Creating certificate..."
   if ! openssl ca \
   -batch \
   -notext \
@@ -196,9 +194,9 @@ then
   -out "$HOST_CERT_PATH" \
   -days 3650 \
   -keyfile "$INTERMEDIATE_CA_KEY_PATH" \
-  -passin "file:$OPENSSL_PASSIN_PATH" ;
+  -passin "file:$OPENSSL_PASSIN_PATH" 1> -  ;
   then
-    echo "Error: creating server certificate failed" &>/dev/null
+    echo "Error: creating server certificate failed" &> - 
     exit $cert_error
   fi
   cat "$HOST_CERT_PATH" "$INTERMEDIATE_CA_BUNDLE_PATH" > "$HOST_CERT_BUNDLE_PATH"
@@ -212,13 +210,13 @@ fi
 
 if ! [[ -a "$HOST_KEY_PATH" ]]
 then
-  echo "Error: $HOST_NAME certificate key at $HOST_KEY_PATH is missing" &>/dev/null
+  echo "Error: $HOST_NAME certificate key at $HOST_KEY_PATH is missing"
   exit $env_error
 fi
 echo "Verifying certificate chain..."
-if ! openssl verify -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" "$HOST_CERT_BUNDLE_PATH";
+if ! openssl verify -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" "$HOST_CERT_BUNDLE_PATH" 1> -  ;
 then
-  echo "Error: Unable to verify $HOST_CERT_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH" &>/dev/null
+  echo "Error: Unable to verify $HOST_CERT_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH"
   exit $cert_error
 else
   echo "  ...Verified $HOST_CERT_BUNDLE_PATH against $INTERMEDIATE_CA_BUNDLE_PATH"
@@ -254,7 +252,7 @@ openssl s_server \
   -key "$HOST_KEY_PATH" \
   -cert "$HOST_CERT_BUNDLE_PATH" \
   -accept 44330 \
-  -www &
+  -www 1> -  &
 sleep 3
 set_openssl_server_pid
 if [[ $server_pid -eq 0  ]]
@@ -266,7 +264,7 @@ echo "  ...server started..."
 
 echo "Q" > q.txt
 echo "Checking connection with CAfile $INTERMEDIATE_CA_BUNDLE_PATH..."
-if ! openssl s_client -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" -connect localhost:44330 < q.txt ;
+if ! openssl s_client -CAfile "$INTERMEDIATE_CA_BUNDLE_PATH" -connect localhost:44330 < q.txt 1> -  ;
 then
   echo "Error: certificate is invalid"
   kill_openssl_server
@@ -281,17 +279,17 @@ fi
 echo "Checking podman VM..."
 if ! source "$THIS_DIR/podman_vm.sh" && start_vm ;
 then
-  echo "Error: podman vm not running" &>/dev/null
+  echo "Error: podman vm not running" &> - 
   exit $podman_error
 fi
 
 echo "Removing podman secrets..."
 # If the secrets don't exist, we don't care, so we'll swallow the error messages
-podman secret rm "${HOST_NAME}_cert_key" &>/dev/null
-podman secret rm "${HOST_NAME}_cert_pub" &>/dev/null
-podman secret rm "${HOST_NAME}_cert_bundle_pub" &>/dev/null
-podman secret rm "intermediate_ca_bundle_pub" &>/dev/null
-podman secret rm "root_ca_pub" &>/dev/null
+podman secret rm "${HOST_NAME}_cert_key" &> - 
+podman secret rm "${HOST_NAME}_cert_pub" &> - 
+podman secret rm "${HOST_NAME}_cert_bundle_pub" &> - 
+podman secret rm "intermediate_ca_bundle_pub" &> - 
+podman secret rm "root_ca_pub" &> - 
 
 echo "Creating podman secrets..."
 if ! podman secret create "${HOST_NAME}_cert_key" "$HOST_KEY_PATH"
